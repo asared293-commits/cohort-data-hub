@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net: Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Bootstrapped Admin check with mandatory email_verified verification
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'asared293@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    // Comprehensive Admin check
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Document ID sanitization guard
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['firstName', 'smsConsent', 'emailConsent', 'subscriptionCount', 'firstSubscribedAt', 'lastSubscribedAt', 'customerStatus', 'loyaltyTier', 'specialOffers', 'createdAt', 'updatedAt']) &&
+        data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 100 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+        data.smsConsent is bool &&
+        data.emailConsent is bool &&
+        (data.smsConsent == true || data.emailConsent == true) &&
+        data.subscriptionCount is int && data.subscriptionCount >= 1 &&
+        data.customerStatus in ['subscriber', 'unsubscribed'] &&
+        data.loyaltyTier in ['standard', 'special_offers', 'unsubscribed'] &&
+        data.specialOffers is bool;
+    }
+
+    function isValidSpecialOffer(data) {
+      return data.keys().hasAll(['offerName', 'network', 'dataAmount', 'specialPrice', 'normalPrice', 'active', 'createdAt']) &&
+        data.offerName is string && data.offerName.size() >= 1 && data.offerName.size() <= 120 &&
+        data.specialPrice is number && data.specialPrice >= 0 &&
+        data.normalPrice is number && data.normalPrice >= 0 &&
+        data.active is bool;
+    }
+
+    // Admins registry: only authorized admins can inspect, bootstrapped admin can register
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isBootstrappedAdmin();
+    }
+
+    // Customers collection: ZERO public reads (protects customer privacy & PII)
+    match /customers/{customerId} {
+      // Administrator access: view single customer or list all customers
+      allow get, list: if isAdmin();
+
+      // Voluntary creation by visitors submitting subscription forms
+      allow create: if isValidId(customerId) && isValidCustomer(request.resource.data);
+
+      // Management & unsubscribe updates: restricted to authenticated administrators
+      allow update: if isAdmin() && isValidCustomer(request.resource.data);
+
+      // Deletion: restricted to authenticated administrators
+      allow delete: if isAdmin();
+    }
+
+    // Special Offers collection:
+    // Read: anyone can read active special offers (used to present deals to recognized returning customers)
+    // Write: restricted to authorized administrators
+    match /special_offers/{offerId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidSpecialOffer(request.resource.data);
+    }
+
+    // Campaigns collection: restricted to authorized administrators
+    match /campaigns/{campaignId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Legacy subscribers collection: backward-compatible support
+    match /subscribers/{subscriberId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(subscriberId);
+      allow update, delete: if isAdmin();
+    }
+
+    // Connection heartbeat probe
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

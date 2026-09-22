@@ -1,0 +1,239 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "Represents a customer subscriber with loyalty tier and permission-based marketing preferences",
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "type": "string",
+          "description": "Unique identifier for the customer"
+        },
+        "firstName": {
+          "type": "string",
+          "description": "First name of the customer",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "phone": {
+          "type": "string",
+          "description": "Normalized phone number provided voluntarily",
+          "maxLength": 30
+        },
+        "email": {
+          "type": "string",
+          "description": "Normalized lowercase email address provided voluntarily",
+          "maxLength": 120
+        },
+        "smsConsent": {
+          "type": "boolean",
+          "description": "Explicit affirmative consent for SMS marketing"
+        },
+        "emailConsent": {
+          "type": "boolean",
+          "description": "Explicit affirmative consent for Email marketing"
+        },
+        "subscriptionCount": {
+          "type": "integer",
+          "description": "Number of times the customer has voluntarily submitted the subscription form",
+          "minimum": 1
+        },
+        "firstSubscribedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of initial subscription"
+        },
+        "lastSubscribedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of most recent subscription event"
+        },
+        "customerStatus": {
+          "type": "string",
+          "enum": ["subscriber", "unsubscribed"],
+          "description": "Active subscriber status or unsubscribed state"
+        },
+        "loyaltyTier": {
+          "type": "string",
+          "enum": ["standard", "special_offers", "unsubscribed"],
+          "description": "Customer loyalty tier: standard (1 subscription), special_offers (2+ subscriptions), or unsubscribed"
+        },
+        "specialOffers": {
+          "type": "boolean",
+          "description": "Whether the customer is currently eligible for Special Offers"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Record creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Record last update timestamp"
+        }
+      },
+      "required": [
+        "firstName",
+        "smsConsent",
+        "emailConsent",
+        "subscriptionCount",
+        "firstSubscribedAt",
+        "lastSubscribedAt",
+        "customerStatus",
+        "loyaltyTier",
+        "specialOffers",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SpecialOffer": {
+      "title": "SpecialOffer",
+      "description": "Special data deals exclusive to returning subscribers in the Special Offers tier",
+      "type": "object",
+      "properties": {
+        "offerName": {
+          "type": "string",
+          "description": "Display name of the special offer",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Short explanation of the offer"
+        },
+        "network": {
+          "type": "string",
+          "enum": ["MTN", "TELECEL", "AIRTELTIGO", "ALL"],
+          "description": "Target mobile telecommunication network"
+        },
+        "dataAmount": {
+          "type": "string",
+          "description": "Data bundle volume (e.g. 5GB, 10GB)"
+        },
+        "specialPrice": {
+          "type": "number",
+          "description": "Discounted price in GHS for special offer subscribers",
+          "minimum": 0
+        },
+        "normalPrice": {
+          "type": "number",
+          "description": "Standard market price in GHS",
+          "minimum": 0
+        },
+        "startDate": {
+          "type": "string",
+          "description": "Start date/time of promotion"
+        },
+        "endDate": {
+          "type": "string",
+          "description": "Expiration date/time of promotion"
+        },
+        "smsMessage": {
+          "type": "string",
+          "description": "Pre-formatted promotional text message template for SMS campaigns"
+        },
+        "emailMessage": {
+          "type": "string",
+          "description": "Pre-formatted promotional email message template"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether this offer is active and visible to eligible returning subscribers"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "offerName",
+        "network",
+        "dataAmount",
+        "specialPrice",
+        "normalPrice",
+        "active",
+        "createdAt"
+      ]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Historical log of SMS or Email promotional dispatches",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "enum": ["sms", "email"]
+        },
+        "targetAudience": {
+          "type": "string",
+          "enum": ["all_consenting", "special_offers_consenting"]
+        },
+        "recipientCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "subject": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "sentAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["dispatched", "completed"]
+        }
+      },
+      "required": ["channel", "targetAudience", "recipientCount", "message", "sentAt", "status"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized administrator user profile for managing subscribers",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Verified administrator Google account email",
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "super_admin"],
+          "description": "Role level"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when admin access was granted"
+        }
+      },
+      "required": ["email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Customer profiles, loyalty tiers, and permission-based marketing consent records"
+    },
+    "/special_offers/{offerId}": {
+      "schema": "SpecialOffer",
+      "description": "Exclusive bundle promotions managed by administrators for returning subscribers"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Historical records of permission-filtered SMS and Email marketing campaigns"
+    },
+    "/subscribers/{subscriberId}": {
+      "schema": "Customer",
+      "description": "Legacy subscriber collection mapped to verified administrators"
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Collection of authorized administrator user IDs"
+    }
+  }
+}

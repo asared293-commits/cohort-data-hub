@@ -1,0 +1,6 @@
+{
+  "name": "Cohort Tech Data Hub",
+  "description": "Ghana's smart data hub for affordable MTN, Telecel and AirtelTigo bundles, connected to a vibrant technology community.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
