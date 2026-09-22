@@ -53,7 +53,8 @@ service cloud.firestore {
         data.offerName is string && data.offerName.size() >= 1 && data.offerName.size() <= 120 &&
         data.specialPrice is number && data.specialPrice >= 0 &&
         data.normalPrice is number && data.normalPrice >= 0 &&
-        data.active is bool;
+        data.active is bool &&
+        (!('targetAudience' in data) || data.targetAudience in ['all', 'standard', 'special_offers']);
     }
 
     // Admins registry: only authorized admins can inspect, bootstrapped admin can register
@@ -80,11 +81,12 @@ service cloud.firestore {
     }
 
     // Special Offers collection:
-    // Read: anyone can read active special offers (used to present deals to recognized returning customers)
-    // Write: restricted to authorized administrators
+    // Read: anyone can read active special offers (used to present deals on public store & recognized returning customers)
+    // Write: create and update validated; delete allowed for admin
     match /special_offers/{offerId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidSpecialOffer(request.resource.data);
+      allow create, update: if isAdmin() && isValidSpecialOffer(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     // Campaigns collection: restricted to authorized administrators

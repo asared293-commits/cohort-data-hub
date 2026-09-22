@@ -36,6 +36,7 @@ import {
   Check,
   X,
   Sparkles,
+  Pencil,
 } from 'lucide-react';
 import { auth, googleProvider } from '../lib/firebase';
 import { customerService } from '../services/customerService';
@@ -80,6 +81,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
 
   // Create Special Offer Modal
   const [isCreateOfferOpen, setIsCreateOfferOpen] = useState(false);
+  const [editingOffer, setEditingOffer] = useState<SpecialOfferDoc | null>(null);
   const [newOffer, setNewOffer] = useState({
     offerName: '',
     description: '',
@@ -89,6 +91,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
     normalPrice: 0,
     startDate: new Date().toISOString().split('T')[0],
     endDate: '2026-12-31',
+    targetAudience: 'all' as 'all' | 'standard' | 'special_offers',
     smsMessage: '',
     emailMessage: '',
     active: true,
@@ -442,6 +445,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
     try {
       const created = await customerService.createSpecialOffer({
         offerName: newOffer.offerName,
+        title: newOffer.offerName,
         description: newOffer.description,
         network: newOffer.network,
         dataAmount: newOffer.dataAmount,
@@ -449,6 +453,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
         normalPrice: Number(newOffer.normalPrice),
         startDate: newOffer.startDate,
         endDate: newOffer.endDate,
+        targetAudience: newOffer.targetAudience,
         smsMessage: newOffer.smsMessage,
         emailMessage: newOffer.emailMessage,
         active: newOffer.active,
@@ -464,12 +469,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
         normalPrice: 0,
         startDate: new Date().toISOString().split('T')[0],
         endDate: '2026-12-31',
+        targetAudience: 'all',
         smsMessage: '',
         emailMessage: '',
         active: true,
       });
     } catch (err) {
       console.error('Failed to create special offer:', err);
+    }
+  };
+
+  const handleUpdateOffer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOffer) return;
+    try {
+      await customerService.updateSpecialOffer(editingOffer.id, {
+        offerName: editingOffer.offerName,
+        title: editingOffer.offerName,
+        description: editingOffer.description,
+        network: editingOffer.network,
+        dataAmount: editingOffer.dataAmount,
+        specialPrice: Number(editingOffer.specialPrice),
+        normalPrice: Number(editingOffer.normalPrice),
+        startDate: editingOffer.startDate,
+        endDate: editingOffer.endDate,
+        targetAudience: editingOffer.targetAudience || 'all',
+        smsMessage: editingOffer.smsMessage,
+        emailMessage: editingOffer.emailMessage,
+        active: editingOffer.active,
+      });
+      setSpecialOffers((prev) =>
+        prev.map((o) => (o.id === editingOffer.id ? editingOffer : o))
+      );
+      setEditingOffer(null);
+    } catch (err) {
+      console.error('Failed to update special offer:', err);
     }
   };
 
@@ -1320,20 +1354,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-slate-900 text-white">
                             {offer.network}
                           </span>
                           <span className="text-xs font-black text-slate-900">{offer.dataAmount}</span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                              offer.targetAudience === 'special_offers'
+                                ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            }`}
+                          >
+                            {offer.targetAudience === 'special_offers'
+                              ? '⭐ VIP SUBSCRIBERS'
+                              : '🌐 PUBLIC (ALL)'}
+                          </span>
                         </div>
                         <h3 className="font-bold text-sm text-slate-900 line-clamp-1">
                           {offer.offerName}
                         </h3>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          📅 {offer.startDate || 'Immediate'} → {offer.endDate || 'No expiry'}
+                        </div>
                       </div>
 
                       <button
                         onClick={() => handleToggleOfferActive(offer)}
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors shrink-0 ${
                           offer.active
                             ? 'bg-emerald-100 text-emerald-800'
                             : 'bg-slate-100 text-slate-500'
@@ -1383,13 +1431,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
                         <span>Promote via SMS</span>
                       </button>
 
-                      <button
-                        onClick={() => handleDeleteOffer(offer.id)}
-                        className="p-1 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50"
-                        title="Delete offer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setEditingOffer(offer)}
+                          className="p-1 rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                          title="Edit offer"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteOffer(offer.id)}
+                          className="p-1 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50 transition-colors"
+                          title="Delete offer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -2153,6 +2210,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
 
               <div>
                 <label className="block font-bold uppercase text-slate-500 mb-1">
+                  Target Audience
+                </label>
+                <select
+                  value={newOffer.targetAudience}
+                  onChange={(e: any) => setNewOffer({ ...newOffer, targetAudience: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none font-bold text-slate-800"
+                >
+                  <option value="all">🌐 Public (All Customers)</option>
+                  <option value="special_offers">⭐ Returning Subscribers Only (Special Offers Tier)</option>
+                  <option value="standard">Standard Subscribers</option>
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {newOffer.targetAudience === 'special_offers'
+                    ? '🔒 Restricted deal: Only eligible returning subscribers will see this card and price on the main hub.'
+                    : '🌍 Visible to all visitors on the main Cohort Tech Data Hub.'}
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold uppercase text-slate-500 mb-1">
                   SMS Message Template
                 </label>
                 <textarea
@@ -2190,6 +2267,189 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
                   className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm"
                 >
                   Save & Publish Offer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Special Offer Modal */}
+      {editingOffer && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-base text-slate-900">
+                  Edit Special Offer
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingOffer(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateOffer} className="p-5 overflow-y-auto space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold uppercase text-slate-500 mb-1">
+                  Offer Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingOffer.offerName}
+                  onChange={(e) => setEditingOffer({ ...editingOffer, offerName: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold uppercase text-slate-500 mb-1">
+                  Short Description
+                </label>
+                <input
+                  type="text"
+                  value={editingOffer.description || ''}
+                  onChange={(e) => setEditingOffer({ ...editingOffer, description: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold uppercase text-slate-500 mb-1">
+                    Network
+                  </label>
+                  <select
+                    value={editingOffer.network}
+                    onChange={(e: any) => setEditingOffer({ ...editingOffer, network: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none font-bold"
+                  >
+                    <option value="MTN">MTN</option>
+                    <option value="TELECEL">Telecel</option>
+                    <option value="AIRTELTIGO">AirtelTigo</option>
+                    <option value="ALL">All Networks</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold uppercase text-slate-500 mb-1">
+                    Data Amount
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editingOffer.dataAmount}
+                    onChange={(e) => setEditingOffer({ ...editingOffer, dataAmount: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold uppercase text-slate-500 mb-1">
+                    Normal Price (GH₵)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    required
+                    value={editingOffer.normalPrice}
+                    onChange={(e) => setEditingOffer({ ...editingOffer, normalPrice: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold uppercase text-emerald-700 mb-1">
+                    Special Price (GH₵)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    required
+                    value={editingOffer.specialPrice}
+                    onChange={(e) => setEditingOffer({ ...editingOffer, specialPrice: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-300 text-xs font-bold text-emerald-900 focus:bg-white focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold uppercase text-slate-500 mb-1">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={editingOffer.startDate || ''}
+                    onChange={(e) => setEditingOffer({ ...editingOffer, startDate: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold uppercase text-slate-500 mb-1">
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={editingOffer.endDate || ''}
+                    onChange={(e) => setEditingOffer({ ...editingOffer, endDate: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold uppercase text-slate-500 mb-1">
+                  Target Audience
+                </label>
+                <select
+                  value={editingOffer.targetAudience || 'all'}
+                  onChange={(e: any) => setEditingOffer({ ...editingOffer, targetAudience: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:bg-white focus:border-emerald-500 focus:outline-none font-bold text-slate-800"
+                >
+                  <option value="all">🌐 Public (All Customers)</option>
+                  <option value="special_offers">⭐ Returning Subscribers Only (Special Offers Tier)</option>
+                  <option value="standard">Standard Subscribers</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="edit-offer-active"
+                  checked={editingOffer.active}
+                  onChange={(e) => setEditingOffer({ ...editingOffer, active: e.target.checked })}
+                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300"
+                />
+                <label htmlFor="edit-offer-active" className="font-bold text-slate-700">
+                  Active (visible on main interface when published)
+                </label>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingOffer(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm"
+                >
+                  Save Changes
                 </button>
               </div>
             </form>

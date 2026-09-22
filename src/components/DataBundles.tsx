@@ -13,6 +13,7 @@ import { DATA_BUNDLES, LINKS } from '../data/constants';
 import { NetworkType, DataBundle } from '../types';
 import { NetworkSelector } from './NetworkSelector';
 import { ProductCard } from './ProductCard';
+import { SpecialOffersSection } from './SpecialOffersSection';
 
 interface DataBundlesProps {
   onOpenAlerts: () => void;
@@ -83,6 +84,9 @@ export const DataBundles: React.FC<DataBundlesProps> = ({
           Affordable Data. Stay Connected.
         </h1>
       </div>
+
+      {/* Dynamic Firestore-Connected Special Offers Carousel */}
+      <SpecialOffersSection onOpenAlerts={onOpenAlerts} />
 
       {/* Network Swipe Selector */}
       <div className="mb-5 max-w-lg mx-auto">

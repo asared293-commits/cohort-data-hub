@@ -35,6 +35,61 @@ export interface SubscriptionResult {
   message: string;
 }
 
+/**
+ * Helper to retrieve stored subscriber info and loyalty tier from local browser storage
+ */
+export function getStoredSubscriber(): {
+  isRecognized: boolean;
+  loyaltyTier: 'standard' | 'special_offers' | null;
+  firstName?: string;
+  phone?: string;
+  email?: string;
+} {
+  try {
+    const raw = localStorage.getItem('cohort_tech_subscription');
+    if (!raw) return { isRecognized: false, loyaltyTier: null };
+    const parsed = JSON.parse(raw);
+    const isSpecial =
+      Boolean(parsed.isReturning) ||
+      parsed.loyaltyTier === 'special_offers' ||
+      (typeof parsed.subscriptionCount === 'number' && parsed.subscriptionCount >= 2);
+    return {
+      isRecognized: true,
+      loyaltyTier: isSpecial ? 'special_offers' : 'standard',
+      firstName: parsed.firstName,
+      phone: parsed.phone || parsed.phoneNumber,
+      email: parsed.email || parsed.emailAddress,
+    };
+  } catch {
+    return { isRecognized: false, loyaltyTier: null };
+  }
+}
+
+/**
+ * Check if an offer is currently within its active date window and active flag is true
+ */
+export function isOfferActiveDate(offer: SpecialOfferDoc, now: Date = new Date()): boolean {
+  if (!offer.active) return false;
+
+  if (offer.startDate) {
+    const start = new Date(offer.startDate);
+    if (offer.startDate.length === 10) {
+      start.setHours(0, 0, 0, 0);
+    }
+    if (now.getTime() < start.getTime()) return false;
+  }
+
+  if (offer.endDate) {
+    const end = new Date(offer.endDate);
+    if (offer.endDate.length === 10) {
+      end.setHours(23, 59, 59, 999);
+    }
+    if (now.getTime() > end.getTime()) return false;
+  }
+
+  return true;
+}
+
 export const customerService = {
   /**
    * Submit Deal Alerts form:
@@ -43,8 +98,8 @@ export const customerService = {
    * Zero dependency on /api/subscribe or response.json().
    */
   async submitSubscription(payload: SubmitSubscriptionPayload): Promise<SubscriptionResult> {
-    // 1. Network connectivity check
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    // 1. Network connectivity check (browser environment)
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
       throw new Error('📡 Please check your internet connection and try again.');
     }
 
@@ -282,20 +337,73 @@ export const customerService = {
   },
 
   /**
-   * Real-time listener for Special Offers
+   * Price Protection & Verification before Purchase:
+   * Directly retrieves the offer from Firestore by ID to prevent frontend tampering.
+   * Confirms active == true, start/end dates, target audience eligibility, and authorized specialPrice.
+   */
+  async verifyOfferForPurchase(
+    offerId: string,
+    userLoyaltyTier?: 'standard' | 'special_offers' | null
+  ): Promise<{
+    verified: boolean;
+    offer?: SpecialOfferDoc;
+    error?: string;
+  }> {
+    try {
+      const snap = await getDoc(doc(db, OFFERS_COLLECTION, offerId));
+      if (!snap.exists()) {
+        return { verified: false, error: 'This special offer is no longer available or was removed.' };
+      }
+      const freshOffer = snap.data() as SpecialOfferDoc;
+
+      if (!freshOffer.active) {
+        return { verified: false, error: 'This special offer is currently inactive or paused.' };
+      }
+
+      const now = new Date();
+      if (!isOfferActiveDate(freshOffer, now)) {
+        return { verified: false, error: 'This special offer has expired or has not started yet.' };
+      }
+
+      const audience = freshOffer.targetAudience || 'all';
+      if (audience === 'special_offers' && userLoyaltyTier !== 'special_offers') {
+        return {
+          verified: false,
+          error: 'This exclusive deal is reserved for returning Cohort Tech subscribers.',
+        };
+      }
+
+      return {
+        verified: true,
+        offer: freshOffer,
+      };
+    } catch (err: any) {
+      console.warn('Error verifying offer for purchase:', err);
+      return {
+        verified: false,
+        error: 'Unable to verify this special offer at the moment. Please try again.',
+      };
+    }
+  },
+
+  /**
+   * Real-time listener for Special Offers directly from Firestore.
+   * Automatically notifies when offers are created, edited, activated, deactivated, or deleted.
    */
   subscribeToSpecialOffers(
     onData: (offers: SpecialOfferDoc[]) => void,
     onError?: (err: Error) => void
   ) {
-    const q = query(collection(db, OFFERS_COLLECTION), orderBy('createdAt', 'desc'));
+    const colRef = collection(db, OFFERS_COLLECTION);
     return onSnapshot(
-      q,
+      colRef,
       (snapshot) => {
         const list: SpecialOfferDoc[] = [];
         snapshot.forEach((d) => {
           list.push(d.data() as SpecialOfferDoc);
         });
+        // Sort newest first
+        list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
         onData(list);
       },
       (error) => {
@@ -316,9 +424,14 @@ export const customerService = {
       );
       const snapshot = await getDocs(q);
       const list: SpecialOfferDoc[] = [];
+      const now = new Date();
       snapshot.forEach((d) => {
-        list.push(d.data() as SpecialOfferDoc);
+        const offer = d.data() as SpecialOfferDoc;
+        if (isOfferActiveDate(offer, now)) {
+          list.push(offer);
+        }
       });
+      list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       return list;
     } catch {
       // Fallback to server endpoint with safe content-type verification
@@ -347,7 +460,10 @@ export const customerService = {
     const newOffer: SpecialOfferDoc = {
       ...offerData,
       id,
+      title: offerData.title || offerData.offerName,
+      targetAudience: offerData.targetAudience || 'all',
       createdAt: now,
+      updatedAt: now,
     };
 
     const path = `${OFFERS_COLLECTION}/${id}`;
@@ -372,12 +488,16 @@ export const customerService = {
     updates: Partial<SpecialOfferDoc>
   ): Promise<void> {
     const path = `${OFFERS_COLLECTION}/${id}`;
+    const cleanUpdates = {
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
     try {
-      await updateDoc(doc(db, OFFERS_COLLECTION, id), updates);
+      await updateDoc(doc(db, OFFERS_COLLECTION, id), cleanUpdates);
       await fetch(`/api/admin/special-offers/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
+        body: JSON.stringify(cleanUpdates),
       }).catch(() => {});
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);

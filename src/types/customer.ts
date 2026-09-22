@@ -23,6 +23,7 @@ export interface CustomerDoc {
 export interface SpecialOfferDoc {
   id: string;
   offerName: string;
+  title?: string;
   description: string;
   network: 'MTN' | 'TELECEL' | 'AIRTELTIGO' | 'ALL';
   dataAmount: string;
@@ -30,10 +31,12 @@ export interface SpecialOfferDoc {
   normalPrice: number;
   startDate: string;
   endDate: string;
+  targetAudience?: 'all' | 'standard' | 'special_offers';
   smsMessage: string;
   emailMessage: string;
   active: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CampaignDoc {
