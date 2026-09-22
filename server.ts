@@ -187,7 +187,17 @@ function saveCampaigns(campaigns: CampaignRecord[]): void {
 }
 
 function normalizePhone(phone: string): string {
-  return phone.replace(/[\s\-\(\)]/g, "");
+  if (!phone) return "";
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, "").trim();
+  if (cleaned.startsWith("+233")) {
+    cleaned = "0" + cleaned.slice(4);
+  } else if (cleaned.startsWith("233") && cleaned.length >= 11) {
+    cleaned = "0" + cleaned.slice(3);
+  }
+  if (cleaned.length === 9 && !cleaned.startsWith("0")) {
+    cleaned = "0" + cleaned;
+  }
+  return cleaned;
 }
 
 function normalizeEmail(email: string): string {
@@ -297,7 +307,7 @@ async function startServer() {
         isReturning: true,
         customer: updatedCustomer,
         unlockedOffers: activeOffers,
-        message: "👋 WELCOME BACK! You've unlocked Cohort Tech Special Offers.",
+        message: "🎉 WELCOME BACK! You've unlocked Cohort Tech Special Offers.",
       });
     }
 
@@ -329,7 +339,7 @@ async function startServer() {
       isReturning: false,
       customer: newCustomer,
       unlockedOffers: [],
-      message: "🎉 You're subscribed! Keep an eye out for Cohort Tech Data Hub updates and offers.",
+      message: "🎉 YOU'RE SUBSCRIBED! Thanks for joining Cohort Tech Data Hub updates.",
     });
   });
 
@@ -541,6 +551,26 @@ async function startServer() {
       campaign,
       recipientCount: eligibleCustomers.length,
       message: `Campaign dispatched to ${eligibleCustomers.length} consenting subscribers.`,
+    });
+  });
+
+  // Catch-all 404 JSON response for any unmatched API endpoints
+  // This guarantees frontend NEVER receives HTML or "The page cannot be found..." for /api routes
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({
+      success: false,
+      error: "ENDPOINT_NOT_FOUND",
+      message: `The API endpoint ${req.method} ${req.path} was not found.`,
+    });
+  });
+
+  // Global API error handler ensuring application/json is always returned
+  app.use("/api", (err: any, req: any, res: any, next: any) => {
+    console.error("API route error:", err);
+    res.status(500).json({
+      success: false,
+      error: "INTERNAL_SERVER_ERROR",
+      message: "An internal server error occurred. Please try again.",
     });
   });
 

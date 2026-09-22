@@ -59,16 +59,18 @@ service cloud.firestore {
       allow write: if isBootstrappedAdmin();
     }
 
-    // Customers collection: ZERO public reads (protects customer privacy & PII)
+    // Customers collection: Administrator lists all, single get & create/update allowed for subscriber self-service
     match /customers/{customerId} {
-      // Administrator access: view single customer or list all customers
-      allow get, list: if isAdmin();
+      // Administrator access: view full collection list (protects privacy & prevents scraping)
+      allow list: if isAdmin();
+      // Allow single document get for admin or subscriber recognition by deterministic ID
+      allow get: if isAdmin() || isValidId(customerId);
 
       // Voluntary creation by visitors submitting subscription forms
       allow create: if isValidId(customerId) && isValidCustomer(request.resource.data);
 
-      // Management & unsubscribe updates: restricted to authenticated administrators
-      allow update: if isAdmin() && isValidCustomer(request.resource.data);
+      // Voluntary update by subscriber (loyalty upgrade/repeat submission) or administrator
+      allow update: if (isAdmin() || isValidId(customerId)) && isValidCustomer(request.resource.data);
 
       // Deletion: restricted to authenticated administrators
       allow delete: if isAdmin();

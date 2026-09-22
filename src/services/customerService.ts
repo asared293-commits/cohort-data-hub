@@ -14,6 +14,7 @@ import {
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import { CustomerDoc, SpecialOfferDoc, CampaignDoc } from '../types/customer';
+import { normalizeGhanaPhone, isValidGhanaPhone, isValidEmail } from '../utils/phoneValidation';
 
 const CUSTOMERS_COLLECTION = 'customers';
 const OFFERS_COLLECTION = 'special_offers';
@@ -38,60 +39,215 @@ export const customerService = {
   /**
    * Submit Deal Alerts form:
    * Handles transparent subscriber recognition, duplicate prevention, and special offers loyalty tier upgrade.
+   * Safe across all deployment environments (Local Server, Cloud Run, and Static/Vercel with Firestore).
    */
   async submitSubscription(payload: SubmitSubscriptionPayload): Promise<SubscriptionResult> {
-    const cleanFirstName = payload.firstName.trim();
-    const cleanPhone = payload.phoneNumber ? payload.phoneNumber.trim().replace(/[\s\-()]/g, '') : '';
-    const cleanEmail = payload.emailAddress ? payload.emailAddress.trim().toLowerCase() : '';
+    // 1. Network connectivity check
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      throw new Error('📡 No internet connection. Please check your connection and try again.');
+    }
+
+    // 2. Validate inputs
+    const cleanFirstName = payload.firstName ? payload.firstName.trim() : '';
+    if (!cleanFirstName) {
+      throw new Error('First name is required.');
+    }
 
     if (!payload.smsConsent && !payload.emailConsent) {
-      throw new Error('Please select at least one notification channel (SMS or Email).');
+      throw new Error('Please select SMS alerts, email alerts, or both.');
     }
 
-    if (payload.smsConsent && !cleanPhone) {
-      throw new Error('A valid phone number is required for SMS deal alerts.');
-    }
-
-    if (payload.emailConsent && !cleanEmail) {
-      throw new Error('A valid email address is required for Email deal alerts.');
-    }
-
-    // Call the server endpoint which securely checks for duplicate records without exposing customer PII
-    const response = await fetch('/api/subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        firstName: cleanFirstName,
-        phoneNumber: cleanPhone,
-        emailAddress: cleanEmail,
-        smsConsent: Boolean(payload.smsConsent),
-        emailConsent: Boolean(payload.emailConsent),
-      }),
-    });
-
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Failed to process subscription.');
-    }
-
-    // Also mirror to client Firestore if document creation is permitted
-    if (data.customer && data.customer.customerId) {
-      try {
-        await setDoc(doc(db, CUSTOMERS_COLLECTION, data.customer.customerId), data.customer, {
-          merge: true,
-        });
-      } catch (err) {
-        // Silently tolerate if rules require admin for specific updates; server already committed
-        console.info('Client Firestore mirror notice:', err);
+    let cleanPhone = '';
+    if (payload.smsConsent) {
+      const rawPhone = payload.phoneNumber ? payload.phoneNumber.trim() : '';
+      if (!rawPhone) {
+        throw new Error('Phone number is required for SMS deal alerts.');
+      }
+      cleanPhone = normalizeGhanaPhone(rawPhone);
+      if (!isValidGhanaPhone(cleanPhone)) {
+        throw new Error('Please enter a valid Ghana phone number (e.g. 055 123 4567 or 053 742 0120).');
       }
     }
 
-    return {
-      isReturning: Boolean(data.isReturning),
-      customer: data.customer,
-      unlockedOffers: data.unlockedOffers || [],
-      message: data.message,
-    };
+    let cleanEmail = '';
+    if (payload.emailConsent) {
+      const rawEmail = payload.emailAddress ? payload.emailAddress.trim().toLowerCase() : '';
+      if (!rawEmail) {
+        throw new Error('Email address is required for Email deal alerts.');
+      }
+      if (!isValidEmail(rawEmail)) {
+        throw new Error('Please enter a valid email address (e.g. you@example.com).');
+      }
+      cleanEmail = rawEmail;
+    }
+
+    // 3. Try server API endpoint with robust Content-Type check (does NOT crash if endpoint returns HTML/404)
+    let apiData: any = null;
+    try {
+      const response = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          firstName: cleanFirstName,
+          phoneNumber: cleanPhone || undefined,
+          emailAddress: cleanEmail || undefined,
+          smsConsent: Boolean(payload.smsConsent),
+          emailConsent: Boolean(payload.emailConsent),
+        }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.toLowerCase().includes('application/json');
+
+      if (isJson) {
+        const data = await response.json();
+        if (response.ok && data.success) {
+          apiData = data;
+        } else {
+          // Server returned an explicit JSON error
+          console.error('Subscription API returned error JSON:', {
+            status: response.status,
+            contentType,
+            body: data,
+            endpoint: '/api/subscribe',
+          });
+          if (data.error || data.message) {
+            throw new Error(data.message || data.error);
+          }
+        }
+      } else {
+        // Server returned non-JSON (e.g., Vercel static 404 HTML: "The page cannot be found...")
+        const rawText = await response.text().catch(() => '');
+        console.error('Subscription API error (non-JSON response):', {
+          status: response.status,
+          contentType,
+          body: rawText.substring(0, 300),
+          endpoint: '/api/subscribe',
+        });
+        // Do NOT rethrow raw HTML; continue to Firestore direct storage!
+      }
+    } catch (apiErr: any) {
+      // If error is a user-facing validation error from the API, rethrow it
+      if (
+        apiErr.message &&
+        !apiErr.message.includes('Unexpected') &&
+        !apiErr.message.includes('JSON') &&
+        !apiErr.message.includes('Failed to fetch') &&
+        !apiErr.message.includes('NetworkError')
+      ) {
+        throw apiErr;
+      }
+      console.warn('API endpoint unavailable or returned non-JSON, proceeding with direct Firebase Firestore:', apiErr);
+    }
+
+    // If backend API succeeded and returned valid customer data, mirror to Firestore and return
+    if (apiData && apiData.customer) {
+      if (apiData.customer.customerId) {
+        try {
+          await setDoc(doc(db, CUSTOMERS_COLLECTION, apiData.customer.customerId), apiData.customer, {
+            merge: true,
+          });
+        } catch (mirrorErr) {
+          console.info('Client Firestore mirror note:', mirrorErr);
+        }
+      }
+      return {
+        isReturning: Boolean(apiData.isReturning || apiData.isReturningSubscriber),
+        customer: apiData.customer,
+        unlockedOffers: apiData.unlockedOffers || [],
+        message: apiData.message || (apiData.isReturning ? "🎉 WELCOME BACK! You've unlocked Cohort Tech Special Offers." : "🎉 YOU'RE SUBSCRIBED! Thanks for joining Cohort Tech Data Hub updates."),
+      };
+    }
+
+    // 4. DIRECT FIREBASE FIRESTORE IMPLEMENTATION (Guaranteed for Vercel, Static Hosts & Serverless)
+    try {
+      // Deterministic customer identifier for recognition without collection listing
+      const canonicalPhoneKey = cleanPhone ? `cust_p_${cleanPhone}` : '';
+      const canonicalEmailKey = cleanEmail ? `cust_e_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+
+      let existingData: CustomerDoc | null = null;
+      let targetDocId = canonicalPhoneKey || canonicalEmailKey || `cust_${Date.now()}`;
+
+      // A. Check existing by phone key
+      if (canonicalPhoneKey) {
+        try {
+          const phoneSnap = await getDoc(doc(db, CUSTOMERS_COLLECTION, canonicalPhoneKey));
+          if (phoneSnap.exists()) {
+            existingData = phoneSnap.data() as CustomerDoc;
+            targetDocId = canonicalPhoneKey;
+          }
+        } catch (e) {
+          console.warn('Firestore phone lookup note:', e);
+        }
+      }
+
+      // B. If not found by phone, check by email key
+      if (!existingData && canonicalEmailKey) {
+        try {
+          const emailSnap = await getDoc(doc(db, CUSTOMERS_COLLECTION, canonicalEmailKey));
+          if (emailSnap.exists()) {
+            existingData = emailSnap.data() as CustomerDoc;
+            targetDocId = canonicalEmailKey;
+          }
+        } catch (e) {
+          console.warn('Firestore email lookup note:', e);
+        }
+      }
+
+      const now = new Date().toISOString();
+      const isReturning = Boolean(existingData);
+      const newSubscriptionCount = existingData ? (existingData.subscriptionCount || 1) + 1 : 1;
+
+      // Construct customer record adhering strictly to Firestore schema
+      const customerDoc: CustomerDoc = {
+        customerId: targetDocId,
+        firstName: cleanFirstName || (existingData?.firstName || 'Subscriber'),
+        ...(cleanPhone ? { phone: cleanPhone } : existingData?.phone ? { phone: existingData.phone } : {}),
+        ...(cleanEmail ? { email: cleanEmail } : existingData?.email ? { email: existingData.email } : {}),
+        smsConsent: Boolean(payload.smsConsent),
+        emailConsent: Boolean(payload.emailConsent),
+        subscriptionCount: newSubscriptionCount,
+        customerStatus: 'subscriber',
+        loyaltyTier: isReturning || newSubscriptionCount >= 2 ? 'special_offers' : 'standard',
+        specialOffers: isReturning || newSubscriptionCount >= 2,
+        firstSubscribedAt: existingData?.firstSubscribedAt || now,
+        lastSubscribedAt: now,
+        createdAt: existingData?.createdAt || now,
+        updatedAt: now,
+      };
+
+      // Save or update in Firestore
+      await setDoc(doc(db, CUSTOMERS_COLLECTION, targetDocId), customerDoc, { merge: true });
+
+      // Fetch active special offers for returning customers
+      let unlockedOffers: SpecialOfferDoc[] = [];
+      try {
+        const offersSnap = await getDocs(collection(db, OFFERS_COLLECTION));
+        offersSnap.forEach((d) => {
+          const offer = d.data() as SpecialOfferDoc;
+          if (offer.active) {
+            unlockedOffers.push(offer);
+          }
+        });
+      } catch (offersErr) {
+        console.warn('Failed to load special offers from Firestore:', offersErr);
+      }
+
+      return {
+        isReturning,
+        customer: customerDoc,
+        unlockedOffers,
+        message: isReturning
+          ? "🎉 WELCOME BACK! You've unlocked Cohort Tech Special Offers."
+          : "🎉 YOU'RE SUBSCRIBED! Thanks for joining Cohort Tech Data Hub updates.",
+      };
+    } catch (firestoreErr: any) {
+      console.error('Subscription Firestore operation error:', firestoreErr);
+      throw new Error("⚠️ We couldn't complete your subscription right now. Please try again.");
+    }
   },
 
   /**
@@ -171,10 +327,11 @@ export const customerService = {
     try {
       const res = await fetch('/api/unsubscribe', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ identifier, channel }),
       });
-      if (res.ok) {
+      const cType = res.headers.get('content-type') || '';
+      if (res.ok && cType.toLowerCase().includes('application/json')) {
         return await res.json();
       }
       return { success: false, message: 'Could not process unsubscribe request.' };
@@ -226,11 +383,16 @@ export const customerService = {
       });
       return list;
     } catch {
-      // Fallback to server endpoint
-      const res = await fetch('/api/special-offers');
-      if (res.ok) {
-        const data = await res.json();
-        return data.offers || [];
+      // Fallback to server endpoint with safe content-type verification
+      try {
+        const res = await fetch('/api/special-offers');
+        const cType = res.headers.get('content-type') || '';
+        if (res.ok && cType.toLowerCase().includes('application/json')) {
+          const data = await res.json();
+          return data.offers || [];
+        }
+      } catch (e) {
+        console.warn('Special offers API fetch notice:', e);
       }
       return [];
     }

@@ -24,6 +24,7 @@ import { SubscriberFormData, SubscriberResponse } from '../types';
 import { subscriberService } from '../services/subscriberService';
 import { customerService } from '../services/customerService';
 import { SpecialOfferDoc } from '../types/customer';
+import { normalizeGhanaPhone, isValidGhanaPhone, isValidEmail } from '../utils/phoneValidation';
 import cohortTechQrBadge from '../assets/images/cohort_tech_badge_1789968237864.jpg';
 
 interface ModalBaseProps {
@@ -49,31 +50,55 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
   const [isSuccess, setIsSuccess] = useState(false);
   const [isReturningCustomer, setIsReturningCustomer] = useState(false);
   const [unlockedOffers, setUnlockedOffers] = useState<SpecialOfferDoc[]>([]);
+  const [confirmedSmsConsent, setConfirmedSmsConsent] = useState(false);
+  const [confirmedEmailConsent, setConfirmedEmailConsent] = useState(false);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Prevent duplicate clicks
     setErrorMsg('');
 
-    if (!formData.firstName.trim()) {
+    // Check internet connection
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setErrorMsg('📡 No internet connection. Please check your connection and try again.');
+      return;
+    }
+
+    const cleanFirstName = formData.firstName.trim();
+    if (!cleanFirstName) {
       setErrorMsg('Please enter your first name.');
       return;
     }
 
     if (!formData.smsConsent && !formData.emailConsent) {
-      setErrorMsg('Please select at least one notification channel (SMS or Email).');
+      setErrorMsg('Please select SMS alerts, email alerts, or both.');
       return;
     }
 
-    if (formData.smsConsent && !formData.phoneNumber.trim()) {
-      setErrorMsg('Please provide a valid Ghana phone number to receive SMS alerts.');
-      return;
+    const cleanPhone = formData.phoneNumber.trim();
+    if (formData.smsConsent) {
+      if (!cleanPhone) {
+        setErrorMsg('Please enter your Ghana phone number for SMS alerts.');
+        return;
+      }
+      if (!isValidGhanaPhone(cleanPhone)) {
+        setErrorMsg('Please enter a valid Ghana phone number (e.g. 055 123 4567 or 053 742 0120).');
+        return;
+      }
     }
 
-    if (formData.emailConsent && !formData.emailAddress.trim()) {
-      setErrorMsg('Please provide a valid email address to receive email alerts.');
-      return;
+    const cleanEmail = formData.emailAddress.trim();
+    if (formData.emailConsent) {
+      if (!cleanEmail) {
+        setErrorMsg('Please enter your email address for email alerts.');
+        return;
+      }
+      if (!isValidEmail(cleanEmail)) {
+        setErrorMsg('Please enter a valid email address (e.g. you@example.com).');
+        return;
+      }
     }
 
     setLoading(true);
@@ -81,19 +106,33 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
     try {
       // Submit through customer & loyalty service (prevents duplicates & detects returning subscribers)
       const result = await customerService.submitSubscription({
-        firstName: formData.firstName.trim(),
-        phoneNumber: formData.smsConsent ? formData.phoneNumber.trim() : undefined,
-        emailAddress: formData.emailConsent ? formData.emailAddress.trim() : undefined,
-        smsConsent: formData.smsConsent,
-        emailConsent: formData.emailConsent,
+        firstName: cleanFirstName,
+        phoneNumber: formData.smsConsent ? normalizeGhanaPhone(cleanPhone) : undefined,
+        emailAddress: formData.emailConsent ? cleanEmail.toLowerCase() : undefined,
+        smsConsent: Boolean(formData.smsConsent),
+        emailConsent: Boolean(formData.emailConsent),
       });
 
+      setConfirmedSmsConsent(Boolean(formData.smsConsent));
+      setConfirmedEmailConsent(Boolean(formData.emailConsent));
       setIsReturningCustomer(result.isReturning);
       setUnlockedOffers(result.unlockedOffers || []);
       setIsSuccess(true);
     } catch (err: unknown) {
-      console.error('Subscription error:', err);
-      const message = err instanceof Error ? err.message : 'Unable to complete subscription.';
+      console.error('Subscription form submission error:', err);
+      let message = '⚠️ We couldn\'t complete your subscription right now. Please try again.';
+      if (err instanceof Error) {
+        // Only show friendly business validation messages to users
+        if (
+          err.message.includes('select SMS') ||
+          err.message.includes('valid Ghana phone') ||
+          err.message.includes('valid email') ||
+          err.message.includes('first name') ||
+          err.message.includes('No internet connection')
+        ) {
+          message = err.message;
+        }
+      }
       setErrorMsg(message);
     } finally {
       setLoading(false);
@@ -104,6 +143,8 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
     setIsSuccess(false);
     setIsReturningCustomer(false);
     setUnlockedOffers([]);
+    setConfirmedSmsConsent(false);
+    setConfirmedEmailConsent(false);
     setFormData({
       firstName: '',
       phoneNumber: '',
@@ -143,7 +184,7 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
         <div className="p-5 sm:p-6">
           {isSuccess ? (
             isReturningCustomer ? (
-              /* Returning Subscriber Experience */
+              /* Returning Subscriber Experience (Section 10) */
               <div className="py-2 text-center space-y-3">
                 <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto shadow-inner">
                   <Sparkles className="w-6 h-6 text-amber-600" />
@@ -153,14 +194,22 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
                     Returning Customer Recognized
                   </span>
                   <h4 className="font-display font-black text-xl text-slate-900">
-                    👋 WELCOME BACK!
+                    🎉 WELCOME BACK!
                   </h4>
-                  <p className="text-xs font-semibold text-slate-700">
-                    You already have a Cohort Tech Data Hub account.
+                  <p className="text-xs sm:text-sm text-slate-600">
+                    You&apos;ve unlocked Cohort Tech Special Offers.
                   </p>
-                  <p className="text-xs text-emerald-800 font-bold bg-emerald-50 py-1.5 px-3 rounded-lg border border-emerald-200">
-                    🎁 You&apos;ve unlocked our Special Offers tier.
-                  </p>
+                  
+                  {/* Channel Notification Indicator */}
+                  <div className="pt-1">
+                    <span className="inline-block text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                      {confirmedSmsConsent && confirmedEmailConsent
+                        ? '📱 SMS + 📧 Email alerts enabled'
+                        : confirmedSmsConsent
+                        ? '📱 SMS alerts enabled'
+                        : '📧 Email alerts enabled'}
+                    </span>
+                  </div>
                 </div>
 
                 {unlockedOffers && unlockedOffers.length > 0 ? (
@@ -208,7 +257,7 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed pt-1">
-                    Special offers and selected data deals may be available to returning subscribers. Keep an eye on your messages!
+                    Special offers and selected data deals are ready for you. Keep an eye on your messages!
                   </p>
                 )}
 
@@ -222,17 +271,29 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
                 </div>
               </div>
             ) : (
-              /* New Subscriber Experience */
+              /* New Subscriber Experience (Section 9) */
               <div className="py-4 text-center space-y-3">
                 <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto shadow-inner">
                   <CheckCircle2 className="w-8 h-8 text-emerald-600" />
                 </div>
                 <h4 className="font-display font-black text-xl text-slate-900">
-                  🎉 You&apos;re subscribed!
+                  🎉 YOU&apos;RE SUBSCRIBED!
                 </h4>
                 <p className="text-xs sm:text-sm text-slate-600 max-w-xs mx-auto leading-relaxed">
-                  Keep an eye out for Cohort Tech Data Hub updates and offers.
+                  Thanks for joining Cohort Tech Data Hub updates.
                 </p>
+
+                {/* Channel Status Badges (Section 9) */}
+                <div className="pt-1">
+                  <span className="inline-block text-xs font-semibold text-emerald-800 bg-emerald-50 px-3.5 py-1 rounded-full border border-emerald-200">
+                    {confirmedSmsConsent && confirmedEmailConsent
+                      ? '📱 SMS + 📧 Email alerts enabled'
+                      : confirmedSmsConsent
+                      ? '📱 SMS alerts enabled'
+                      : '📧 Email alerts enabled'}
+                  </span>
+                </div>
+
                 <div className="pt-3 flex flex-col gap-2">
                   <button
                     onClick={onClose}
@@ -284,7 +345,7 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
                   onChange={(e) =>
                     setFormData({ ...formData, phoneNumber: e.target.value })
                   }
-                  placeholder="e.g. 055 123 4567"
+                  placeholder="e.g. 055 123 4567 or 053 742 0120"
                   className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 text-sm focus:bg-white focus:border-emerald-500 focus:outline-none transition-colors"
                 />
               </div>
@@ -338,9 +399,9 @@ export const DealAlertsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }) =
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-black text-sm shadow-sm active:scale-98 transition-all flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-black text-sm shadow-sm active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                {loading ? 'Subscribing...' : 'GET ALERTS'}
+                {loading ? 'SUBSCRIBING...' : 'GET ALERTS'}
               </button>
             </form>
           )}
