@@ -34,8 +34,11 @@ service cloud.firestore {
     function isValidCustomer(data) {
       return data.keys().hasAll(['firstName', 'smsConsent', 'emailConsent', 'subscriptionCount', 'firstSubscribedAt', 'lastSubscribedAt', 'customerStatus', 'loyaltyTier', 'specialOffers', 'createdAt', 'updatedAt']) &&
         data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 100 &&
+        (!('customerId' in data) || (data.customerId is string && data.customerId.size() <= 128)) &&
         (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+        (!('normalizedPhone' in data) || (data.normalizedPhone is string && data.normalizedPhone.size() <= 30)) &&
         (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+        (!('normalizedEmail' in data) || (data.normalizedEmail is string && data.normalizedEmail.size() <= 120)) &&
         data.smsConsent is bool &&
         data.emailConsent is bool &&
         (data.smsConsent == true || data.emailConsent == true) &&

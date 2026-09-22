@@ -5,7 +5,9 @@ export interface CustomerDoc {
   customerId: string;
   firstName: string;
   phone?: string;
+  normalizedPhone?: string;
   email?: string;
+  normalizedEmail?: string;
   smsConsent: boolean;
   emailConsent: boolean;
   subscriptionCount: number;

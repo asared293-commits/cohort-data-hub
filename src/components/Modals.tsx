@@ -906,8 +906,27 @@ export const AudienceStatsModal: React.FC<ModalBaseProps> = ({ isOpen, onClose }
     if (isOpen) {
       setLoading(true);
       fetch('/api/subscribers/stats')
-        .then((res) => res.json())
-        .then((data) => setStats(data))
+        .then((res) => {
+          const ct = res.headers.get('content-type') || '';
+          if (res.ok && ct.includes('application/json')) {
+            return res.json();
+          }
+          return null;
+        })
+        .then((data) => {
+          if (data) {
+            setStats(data);
+          } else {
+            setStats({
+              totalSubscribers: 0,
+              smsAudienceCount: 0,
+              emailAudienceCount: 0,
+              bothCount: 0,
+              smsOnlyCount: 0,
+              emailOnlyCount: 0,
+            });
+          }
+        })
         .catch(() => {
           setStats({
             totalSubscribers: 0,

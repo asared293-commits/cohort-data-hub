@@ -38,16 +38,17 @@ export interface SubscriptionResult {
 export const customerService = {
   /**
    * Submit Deal Alerts form:
+   * Communicates directly with Cloud Firestore as the single source of truth.
    * Handles transparent subscriber recognition, duplicate prevention, and special offers loyalty tier upgrade.
-   * Safe across all deployment environments (Local Server, Cloud Run, and Static/Vercel with Firestore).
+   * Zero dependency on /api/subscribe or response.json().
    */
   async submitSubscription(payload: SubmitSubscriptionPayload): Promise<SubscriptionResult> {
     // 1. Network connectivity check
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      throw new Error('📡 No internet connection. Please check your connection and try again.');
+      throw new Error('📡 Please check your internet connection and try again.');
     }
 
-    // 2. Validate inputs
+    // 2. Validate inputs strictly before Firestore write
     const cleanFirstName = payload.firstName ? payload.firstName.trim() : '';
     if (!cleanFirstName) {
       throw new Error('First name is required.');
@@ -81,97 +82,16 @@ export const customerService = {
       cleanEmail = rawEmail;
     }
 
-    // 3. Try server API endpoint with robust Content-Type check (does NOT crash if endpoint returns HTML/404)
-    let apiData: any = null;
-    try {
-      const response = await fetch('/api/subscribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          firstName: cleanFirstName,
-          phoneNumber: cleanPhone || undefined,
-          emailAddress: cleanEmail || undefined,
-          smsConsent: Boolean(payload.smsConsent),
-          emailConsent: Boolean(payload.emailConsent),
-        }),
-      });
-
-      const contentType = response.headers.get('content-type') || '';
-      const isJson = contentType.toLowerCase().includes('application/json');
-
-      if (isJson) {
-        const data = await response.json();
-        if (response.ok && data.success) {
-          apiData = data;
-        } else {
-          // Server returned an explicit JSON error
-          console.error('Subscription API returned error JSON:', {
-            status: response.status,
-            contentType,
-            body: data,
-            endpoint: '/api/subscribe',
-          });
-          if (data.error || data.message) {
-            throw new Error(data.message || data.error);
-          }
-        }
-      } else {
-        // Server returned non-JSON (e.g., Vercel static 404 HTML: "The page cannot be found...")
-        const rawText = await response.text().catch(() => '');
-        console.error('Subscription API error (non-JSON response):', {
-          status: response.status,
-          contentType,
-          body: rawText.substring(0, 300),
-          endpoint: '/api/subscribe',
-        });
-        // Do NOT rethrow raw HTML; continue to Firestore direct storage!
-      }
-    } catch (apiErr: any) {
-      // If error is a user-facing validation error from the API, rethrow it
-      if (
-        apiErr.message &&
-        !apiErr.message.includes('Unexpected') &&
-        !apiErr.message.includes('JSON') &&
-        !apiErr.message.includes('Failed to fetch') &&
-        !apiErr.message.includes('NetworkError')
-      ) {
-        throw apiErr;
-      }
-      console.warn('API endpoint unavailable or returned non-JSON, proceeding with direct Firebase Firestore:', apiErr);
-    }
-
-    // If backend API succeeded and returned valid customer data, mirror to Firestore and return
-    if (apiData && apiData.customer) {
-      if (apiData.customer.customerId) {
-        try {
-          await setDoc(doc(db, CUSTOMERS_COLLECTION, apiData.customer.customerId), apiData.customer, {
-            merge: true,
-          });
-        } catch (mirrorErr) {
-          console.info('Client Firestore mirror note:', mirrorErr);
-        }
-      }
-      return {
-        isReturning: Boolean(apiData.isReturning || apiData.isReturningSubscriber),
-        customer: apiData.customer,
-        unlockedOffers: apiData.unlockedOffers || [],
-        message: apiData.message || (apiData.isReturning ? "🎉 WELCOME BACK! You've unlocked Cohort Tech Special Offers." : "🎉 YOU'RE SUBSCRIBED! Thanks for joining Cohort Tech Data Hub updates."),
-      };
-    }
-
-    // 4. DIRECT FIREBASE FIRESTORE IMPLEMENTATION (Guaranteed for Vercel, Static Hosts & Serverless)
+    // 3. Cloud Firestore Direct Communication
     try {
       // Deterministic customer identifier for recognition without collection listing
       const canonicalPhoneKey = cleanPhone ? `cust_p_${cleanPhone}` : '';
       const canonicalEmailKey = cleanEmail ? `cust_e_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
 
       let existingData: CustomerDoc | null = null;
-      let targetDocId = canonicalPhoneKey || canonicalEmailKey || `cust_${Date.now()}`;
+      let targetDocId = canonicalPhoneKey || canonicalEmailKey;
 
-      // A. Check existing by phone key
+      // A. Check existing customer by phone key
       if (canonicalPhoneKey) {
         try {
           const phoneSnap = await getDoc(doc(db, CUSTOMERS_COLLECTION, canonicalPhoneKey));
@@ -184,7 +104,7 @@ export const customerService = {
         }
       }
 
-      // B. If not found by phone, check by email key
+      // B. If not found by phone, check existing customer by email key
       if (!existingData && canonicalEmailKey) {
         try {
           const emailSnap = await getDoc(doc(db, CUSTOMERS_COLLECTION, canonicalEmailKey));
@@ -201,12 +121,13 @@ export const customerService = {
       const isReturning = Boolean(existingData);
       const newSubscriptionCount = existingData ? (existingData.subscriptionCount || 1) + 1 : 1;
 
-      // Construct customer record adhering strictly to Firestore schema
+      // Construct customer document strictly adhering to required schema (Section 8)
+      // Consent flags remain independent
       const customerDoc: CustomerDoc = {
         customerId: targetDocId,
-        firstName: cleanFirstName || (existingData?.firstName || 'Subscriber'),
-        ...(cleanPhone ? { phone: cleanPhone } : existingData?.phone ? { phone: existingData.phone } : {}),
-        ...(cleanEmail ? { email: cleanEmail } : existingData?.email ? { email: existingData.email } : {}),
+        firstName: cleanFirstName,
+        ...(cleanPhone ? { phone: cleanPhone, normalizedPhone: cleanPhone } : existingData?.phone ? { phone: existingData.phone, normalizedPhone: existingData.normalizedPhone || existingData.phone } : {}),
+        ...(cleanEmail ? { email: cleanEmail, normalizedEmail: cleanEmail } : existingData?.email ? { email: existingData.email, normalizedEmail: existingData.normalizedEmail || existingData.email } : {}),
         smsConsent: Boolean(payload.smsConsent),
         emailConsent: Boolean(payload.emailConsent),
         subscriptionCount: newSubscriptionCount,
@@ -219,33 +140,50 @@ export const customerService = {
         updatedAt: now,
       };
 
-      // Save or update in Firestore
-      await setDoc(doc(db, CUSTOMERS_COLLECTION, targetDocId), customerDoc, { merge: true });
+      // Sanitize: remove any undefined fields before writing to Firestore
+      const cleanDocData = Object.fromEntries(
+        Object.entries(customerDoc).filter(([_, v]) => v !== undefined)
+      );
 
-      // Fetch active special offers for returning customers
+      // Write directly to Cloud Firestore as source of truth
+      await setDoc(doc(db, CUSTOMERS_COLLECTION, targetDocId), cleanDocData, { merge: true });
+
+      // Fetch active special offers for returning customers from Firestore
       let unlockedOffers: SpecialOfferDoc[] = [];
-      try {
-        const offersSnap = await getDocs(collection(db, OFFERS_COLLECTION));
-        offersSnap.forEach((d) => {
-          const offer = d.data() as SpecialOfferDoc;
-          if (offer.active) {
-            unlockedOffers.push(offer);
-          }
-        });
-      } catch (offersErr) {
-        console.warn('Failed to load special offers from Firestore:', offersErr);
+      if (isReturning || newSubscriptionCount >= 2) {
+        try {
+          const offersSnap = await getDocs(collection(db, OFFERS_COLLECTION));
+          offersSnap.forEach((d) => {
+            const offer = d.data() as SpecialOfferDoc;
+            if (offer.active) {
+              unlockedOffers.push(offer);
+            }
+          });
+        } catch (offersErr) {
+          console.warn('Could not load special offers from Firestore:', offersErr);
+        }
       }
 
+      // Return confirmed result from Firestore
       return {
         isReturning,
         customer: customerDoc,
         unlockedOffers,
         message: isReturning
           ? "🎉 WELCOME BACK! You've unlocked Cohort Tech Special Offers."
-          : "🎉 YOU'RE SUBSCRIBED! Thanks for joining Cohort Tech Data Hub updates.",
+          : "🎉 YOU'RE SUBSCRIBED! Thanks for joining Cohort Tech Data Hub alerts.",
       };
     } catch (firestoreErr: any) {
-      console.error('Subscription Firestore operation error:', firestoreErr);
+      console.error('Subscription Firestore write error:', firestoreErr);
+      if (
+        firestoreErr.message &&
+        (firestoreErr.message.includes('internet connection') ||
+          firestoreErr.message.includes('required') ||
+          firestoreErr.message.includes('valid') ||
+          firestoreErr.message.includes('select SMS'))
+      ) {
+        throw firestoreErr;
+      }
       throw new Error("⚠️ We couldn't complete your subscription right now. Please try again.");
     }
   },

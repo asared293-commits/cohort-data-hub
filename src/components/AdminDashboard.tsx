@@ -135,27 +135,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStore })
     setDataLoading(true);
     setDataError(null);
 
-    // Initial load from server API as fast fallback
+    // Initial load from server API if running in full-stack container mode
     fetch('/api/admin/customers')
-      .then((res) => res.json())
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        return res.ok && ct.includes('application/json') ? res.json() : null;
+      })
       .then((data) => {
-        if (data.customers && data.customers.length > 0) {
+        if (data && data.customers && data.customers.length > 0) {
           setCustomers(data.customers);
         }
       })
       .catch(() => {});
 
     fetch('/api/admin/special-offers')
-      .then((res) => res.json())
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        return res.ok && ct.includes('application/json') ? res.json() : null;
+      })
       .then((data) => {
-        if (data.offers) setSpecialOffers(data.offers);
+        if (data && data.offers) setSpecialOffers(data.offers);
       })
       .catch(() => {});
 
     fetch('/api/admin/campaigns')
-      .then((res) => res.json())
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        return res.ok && ct.includes('application/json') ? res.json() : null;
+      })
       .then((data) => {
-        if (data.campaigns) setCampaigns(data.campaigns);
+        if (data && data.campaigns) setCampaigns(data.campaigns);
       })
       .catch(() => {});
 

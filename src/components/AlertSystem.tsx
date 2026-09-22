@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Mail, Phone, Bell, CheckCircle2, ShieldCheck, AlertCircle, Sparkles, Check, ArrowRight } from 'lucide-react';
 import { SubscriberFormData, SubscriberResponse } from '../types';
+import { customerService } from '../services/customerService';
 
 interface AlertSystemProps {
   onOpenPrivacy?: () => void;
@@ -71,48 +72,37 @@ export const AlertSystem: React.FC<AlertSystemProps> = ({
     setLoading(true);
 
     try {
-      const response = await fetch('/api/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          signupSource: 'website_alert_system',
-        }),
+      const result = await customerService.submitSubscription({
+        firstName: formData.firstName,
+        phoneNumber: formData.smsConsent ? formData.phoneNumber : undefined,
+        emailAddress: formData.emailConsent ? formData.emailAddress : undefined,
+        smsConsent: Boolean(formData.smsConsent),
+        emailConsent: Boolean(formData.emailConsent),
       });
 
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setSuccessResponse(data);
-        // Also cache locally in localStorage for persistent client state
-        const stored = JSON.parse(localStorage.getItem('cohort_tech_subscription') || '{}');
-        localStorage.setItem(
-          'cohort_tech_subscription',
-          JSON.stringify({
-            ...stored,
-            ...formData,
-            timestamp: new Date().toISOString(),
-          })
-        );
-      } else {
-        setErrorMessage(data.error || 'Failed to submit subscription. Please try again.');
-      }
-    } catch (err) {
-      // Fallback for client-only preview if backend is momentarily restarting
-      console.warn('Backend API request failed, saving to client state fallback:', err);
       setSuccessResponse({
         success: true,
-        message: "You're subscribed!",
-        details: "Thanks for joining Cohort Tech Data Hub updates. We'll only send you the types of updates you selected.",
+        message: result.message,
+        details: result.isReturning
+          ? "You've unlocked Cohort Tech Special Offers."
+          : "Thanks for joining Cohort Tech Data Hub alerts. We'll only send you the types of updates you selected.",
         audience: formData.smsConsent && formData.emailConsent ? 'SMS + Email' : formData.smsConsent ? 'SMS' : 'Email',
       });
+
+      // Cache locally
+      const stored = JSON.parse(localStorage.getItem('cohort_tech_subscription') || '{}');
       localStorage.setItem(
         'cohort_tech_subscription',
         JSON.stringify({
+          ...stored,
           ...formData,
+          isReturning: result.isReturning,
           timestamp: new Date().toISOString(),
         })
       );
+    } catch (err: any) {
+      console.error('Subscription error in AlertSystem:', err);
+      setErrorMessage(err.message || "⚠️ We couldn't complete your subscription right now. Please try again.");
     } finally {
       setLoading(false);
     }

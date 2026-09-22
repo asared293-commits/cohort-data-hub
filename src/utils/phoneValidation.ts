@@ -4,16 +4,13 @@
 
 export function normalizeGhanaPhone(raw: string): string {
   if (!raw) return '';
-  let cleaned = raw.replace(/[\s\-\(\)\.]/g, '').trim();
+  let cleaned = raw.replace(/[\s\-\(\)\.\+]/g, '').trim();
   
-  if (cleaned.startsWith('+233')) {
-    cleaned = '0' + cleaned.slice(4);
-  } else if (cleaned.startsWith('233') && cleaned.length >= 11) {
+  // If starts with 233
+  if (cleaned.startsWith('233')) {
     cleaned = '0' + cleaned.slice(3);
-  }
-  
-  // If user entered 9 digits without leading 0 (e.g. 537420120 or 244123456)
-  if (cleaned.length === 9 && !cleaned.startsWith('0')) {
+  } else if (cleaned.length === 9 && !cleaned.startsWith('0')) {
+    // If user omitted leading 0 (e.g. 537420120)
     cleaned = '0' + cleaned;
   }
   
@@ -27,8 +24,14 @@ export function isValidGhanaPhone(raw: string): boolean {
   return /^0[235][0-9]{7,8}$/.test(normalized);
 }
 
+export function normalizeEmail(raw: string): string {
+  if (!raw) return '';
+  return raw.trim().toLowerCase();
+}
+
 export function isValidEmail(raw: string): boolean {
   if (!raw) return false;
-  const email = raw.trim().toLowerCase();
+  const email = normalizeEmail(raw);
   return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
 }
+
